@@ -1,0 +1,36 @@
+buildscript {
+    ext.kotlin_version = '1.7.10' // You may need to verify this version in android/app/build.gradle
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        // THIS IS THE CRITICAL LINE to fix the AAPT2 linking error
+        classpath 'com.android.tools.build:gradle:8.7.0' 
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.buildDir = "../build"
+
+// This is the line causing the conflict. We need it, but it must be alone.
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+// Ensure the build directory is correctly set for all modules
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}
