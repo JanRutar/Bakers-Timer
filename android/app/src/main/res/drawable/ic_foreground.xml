@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Simple stylized muffin: top oval (bun) + bottom rounded rect (cup) -->
+    <item android:top="8dp" android:left="10dp" android:right="10dp">
+        <shape android:shape="oval">
+            <size android:width="64dp" android:height="48dp" />
+            <solid android:color="#FFFFFF" />
+        </shape>
+    </item>
+
+    <item android:top="42dp" android:left="16dp" android:right="16dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#7B3F00" />
+            <corners android:topLeftRadius="8dp" android:topRightRadius="8dp" android:bottomLeftRadius="8dp" android:bottomRightRadius="8dp" />
+            <size android:width="56dp" android:height="28dp" />
+        </shape>
+    </item>
+
+    <!-- Rolling pin accent -->
+    <item android:top="30dp" android:left="6dp" android:right="6dp">
+        <shape android:shape="rectangle">
+            <size android:width="80dp" android:height="8dp" />
+            <solid android:color="#E69A2A" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+</layer-list>

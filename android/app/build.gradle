@@ -25,8 +25,9 @@ if (flutterVersionName == null) {
 
 android {
     namespace = "com.example.bakers_timers"
-    // audioplayers_android requires compileSdk 35+; set to 36 if available locally
-    compileSdk = 36
+    // Updated to use installed platform (android-35) for plugin compatibility.
+    compileSdk = 34
+    
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -40,7 +41,7 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://docs.flutter.dev/deployment/android#reviewing-the-gradle-build-configuration.
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 34
         versionCode = flutterVersionCode.toInteger()
         versionName = flutterVersionName
     }
