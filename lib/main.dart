@@ -7,7 +7,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:io';
 import 'package:assets_audio_player/assets_audio_player.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -74,6 +73,22 @@ class TimerSequence {
             [],
         note: j['note'] as String? ?? '',
       );
+}
+
+// Format durations for display across the app.
+String formatDurationNice(int seconds) {
+  final d = Duration(seconds: seconds);
+  final hours = d.inHours;
+  final minutes = d.inMinutes.remainder(60);
+  final secs = d.inSeconds.remainder(60);
+  if (hours > 0) {
+    if (minutes > 0) return '${hours}h${minutes}min';
+    return '${hours}h';
+  }
+  if (secs == 0) return '${d.inMinutes}min';
+  final mm = d.inMinutes.toString().padLeft(2, '0');
+  final ss = secs.toString().padLeft(2, '0');
+  return '$mm:$ss';
 }
 
 // Editor state for a single sequence
@@ -526,7 +541,7 @@ class _MainMenuScreenState extends ConsumerState<MainMenuScreen>
                                   subtitle: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text('${s.steps.length} steps'),
+                                      Text('${s.steps.length} steps • ${formatDurationNice(s.steps.fold<int>(0, (a, b) => a + b.durationSeconds))}'),
                                       if ((s.note).isNotEmpty)
                                         Text(
                                           s.note,
@@ -759,7 +774,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             onPressed: () {
               final name = nameCtrl.text.trim();
               final mins = int.tryParse(minutesCtrl.text.trim()) ?? 0;
-              final seconds = (mins.clamp(0, 9999)) * 60;
+              // allow up to 1440 minutes (24 hours)
+              final seconds = (mins.clamp(0, 1440)) * 60;
               if (name.isEmpty || seconds <= 0) return;
               final step = TimerStep(name: name, durationSeconds: seconds);
               if (editIndex == null) {
@@ -780,8 +796,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   String _formatDurationSeconds(int s) {
     final d = Duration(seconds: s);
-    final mm = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final ss = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final hours = d.inHours;
+    final minutes = d.inMinutes.remainder(60);
+    final secs = d.inSeconds.remainder(60);
+    if (hours > 0) {
+      if (minutes > 0) return '${hours}h${minutes}min';
+      return '${hours}h';
+    }
+    if (secs == 0) return '${d.inMinutes}min';
+    // fallback to mm:ss when there are seconds
+    final mm = d.inMinutes.toString().padLeft(2, '0');
+    final ss = secs.toString().padLeft(2, '0');
     return '$mm:$ss';
   }
 }
@@ -974,7 +999,8 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
             onPressed: () {
               final name = nameCtrl.text.trim();
               final mins = int.tryParse(minutesCtrl.text.trim()) ?? 0;
-              final seconds = (mins.clamp(0, 9999)) * 60;
+              // allow up to 1440 minutes (24 hours)
+              final seconds = (mins.clamp(0, 1440)) * 60;
               if (name.isEmpty || seconds <= 0) return;
               final step = TimerStep(name: name, durationSeconds: seconds);
               if (editIndex == null) {
@@ -995,8 +1021,16 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
 
   String _formatDurationSeconds(int s) {
     final d = Duration(seconds: s);
-    final mm = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final ss = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    final hours = d.inHours;
+    final minutes = d.inMinutes.remainder(60);
+    final secs = d.inSeconds.remainder(60);
+    if (hours > 0) {
+      if (minutes > 0) return '${hours}h${minutes}min';
+      return '${hours}h';
+    }
+    if (secs == 0) return '${d.inMinutes}min';
+    final mm = d.inMinutes.toString().padLeft(2, '0');
+    final ss = secs.toString().padLeft(2, '0');
     return '$mm:$ss';
   }
 }
@@ -1175,9 +1209,11 @@ class RunScreen extends ConsumerWidget {
 
   String _formatMmSs(int seconds) {
     final d = Duration(seconds: seconds);
-    final mm = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final ss = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$mm:$ss';
+    final hours = d.inHours;
+    final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final secs = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    if (hours > 0) return '${hours.toString()}:$minutes:$secs';
+    return '${d.inMinutes.toString().padLeft(2, '0')}:$secs';
   }
 }
 
