@@ -1,5 +1,5 @@
 name: bakers_timers
-description: "A new Flutter project."
+description: "Timer app for baking, specifically for sourdough bread."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -30,24 +30,17 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # State management
   flutter_riverpod: ^2.3.6
-  # Google Fonts for nicer typography
   google_fonts: ^6.3.0
-  # Persistence
   shared_preferences: ^2.1.0
-  # Local audio playback
-  # For writing temp alarm file
   path_provider: ^2.0.15
-
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.6
-  assets_audio_player: ^3.1.1
+  audioplayers: ^6.5.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.14.4
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -100,3 +93,11 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/custom-fonts/#from-packages
+ 
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/icon/Bakers_timer_icon.png" # Path to your 1024x1024 image
+  # Optional: For a truly "nice" look on Android
+  adaptive_icon_background: "#FFFFFF" # Background color
+

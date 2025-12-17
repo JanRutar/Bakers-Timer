@@ -7,7 +7,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:assets_audio_player/assets_audio_player.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 void main() async {
@@ -225,7 +225,7 @@ class RunnerNotifier extends StateNotifier<RunnerState> {
   RunnerNotifier() : super(RunnerState());
 
   Timer? _ticker;
-  AssetsAudioPlayer? _assetsAudioPlayer;
+  AudioPlayer? _audioPlayer;
 
   void startSequence(TimerSequence seq) {
     _cancelTicker();
@@ -286,12 +286,12 @@ class RunnerNotifier extends StateNotifier<RunnerState> {
     startCurrentStep();
   }
 
-  void stop() {
+  Future<void> stop() async {
     _cancelTicker();
     try {
-      _assetsAudioPlayer?.stop();
-      _assetsAudioPlayer?.dispose();
-      _assetsAudioPlayer = null;
+      await _audioPlayer?.stop();
+      await _audioPlayer?.dispose();
+      _audioPlayer = null;
     } catch (_) {}
     state = RunnerState();
   }
@@ -321,13 +321,11 @@ class RunnerNotifier extends StateNotifier<RunnerState> {
 
   Future<void> _ensureAlarmFileAndPlay() async {
     try {
-      _assetsAudioPlayer ??= AssetsAudioPlayer();
-      await _assetsAudioPlayer!.open(
-        Audio('assets/alarm.wav'),
-        autoStart: true,
-        loopMode: LoopMode.single,
-        showNotification: false,
-      );
+      _audioPlayer ??= AudioPlayer();
+      // loop the alarm
+      await _audioPlayer!.setReleaseMode(ReleaseMode.loop);
+      // audioplayers AssetSource expects the asset file name without 'assets/' prefix
+      await _audioPlayer!.play(AssetSource('alarm.wav'));
     } catch (_) {
       // ignore
     }
@@ -387,8 +385,11 @@ class RunnerNotifier extends StateNotifier<RunnerState> {
     return b;
   }
 
-  void stopAlarm() {
+  Future<void> stopAlarm() async {
     try {
+      await _audioPlayer?.stop();
+      await _audioPlayer?.dispose();
+      _audioPlayer = null;
     } catch (_) {}
     state = state.copyWith(isRinging: false);
   }
@@ -401,6 +402,10 @@ class RunnerNotifier extends StateNotifier<RunnerState> {
   @override
   void dispose() {
     _cancelTicker();
+    try {
+      _audioPlayer?.dispose();
+      _audioPlayer = null;
+    } catch (_) {}
     super.dispose();
   }
 }
