@@ -1,9 +1,7 @@
 # 🥐 Bakers-Timer
 
-A professional-grade Flutter application designed for bakers who need precision and reliability. Built with a modern tech stack to ensure your sourdough never over-proofs and your loaves always come out golden.
+A Flutter application designed for bakers who need precision and reliability. Built with a modern tech stack to ensure your sourdough never over-proofs and your loaves always come out golden.
 
-[![Flutter Version](https://img.shields.io/badge/Flutter-3.24+-02569B?logo=flutter)](https://flutter.dev)
-[![Java Version](https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk)](https://openjdk.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
