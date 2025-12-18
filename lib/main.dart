@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,12 +10,262 @@ import 'dart:typed_data';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+// Global notification plugin instance
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+// Global navigator key for deep-linking from notifications
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize foreground task
+  FlutterForegroundTask.init(
+    androidNotificationOptions: AndroidNotificationOptions(
+      channelId: 'bakers_timer_foreground',
+      channelName: 'Bakers Timer Foreground Service',
+      channelDescription:
+          'This notification keeps the timer running in the background',
+      channelImportance: NotificationChannelImportance.LOW,
+      priority: NotificationPriority.LOW,
+    ),
+    iosNotificationOptions: const IOSNotificationOptions(
+      showNotification: true,
+      playSound: false,
+    ),
+    foregroundTaskOptions: ForegroundTaskOptions(
+      eventAction: ForegroundTaskEventAction.repeat(5000), // Update every 5s
+      autoRunOnBoot: false,
+      autoRunOnMyPackageReplaced: false,
+      allowWakeLock: true,
+      allowWifiLock: false,
+    ),
+  );
+
+  // Initialize notifications
+  await _initializeNotifications();
+
+  // Request permissions
+  await _requestPermissions();
+
   // Lock to portrait to avoid rotation-related overflow issues on small screens.
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
   runApp(const ProviderScope(child: BakersTimerApp()));
+}
+
+Future<void> _initializeNotifications() async {
+  const androidSettings =
+      AndroidInitializationSettings('@mipmap/launcher_icon');
+  const iosSettings = DarwinInitializationSettings(
+    requestAlertPermission: true,
+    requestBadgePermission: true,
+    requestSoundPermission: true,
+  );
+  const initSettings = InitializationSettings(
+    android: androidSettings,
+    iOS: iosSettings,
+  );
+
+  await flutterLocalNotificationsPlugin.initialize(
+    initSettings,
+    onDidReceiveNotificationResponse: (NotificationResponse response) async {
+      await _onNotificationResponse(response);
+    },
+  );
+
+  // Create notification channel for alarms
+  const androidChannel = AndroidNotificationChannel(
+    'bakers_timer_alarms',
+    'Timer Alarms',
+    description: 'Notifications for when timers complete',
+    importance: Importance.max,
+    playSound: true,
+    enableVibration: true,
+  );
+
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(androidChannel);
+}
+
+Future<void> _onNotificationResponse(NotificationResponse response) async {
+  // Bring app to foreground is handled by the OS. Here we navigate.
+  final ctx = navigatorKey.currentContext;
+  if (ctx == null) return;
+
+  // Access Riverpod container
+  final container = ProviderScope.containerOf(ctx);
+  final runner = container.read(runnerProvider);
+  final notifier = container.read(runnerProvider.notifier);
+
+  // Handle action buttons
+  if (response.actionId == 'DISMISS') {
+    // Stop any ringing and clear the alarm notification
+    await notifier.stopAlarm();
+    await flutterLocalNotificationsPlugin.cancel(0);
+    return;
+  }
+
+  // Default tap or OPEN action: navigate to RunScreen
+  final nav = navigatorKey.currentState;
+  if (nav == null) return;
+
+  // Avoid stacking multiple RunScreens
+  bool isOnRunScreen = false;
+  nav.popUntil((route) {
+    final isRun = route.settings.name == 'run';
+    if (isRun) isOnRunScreen = true;
+    return true;
+  });
+
+  if (!isOnRunScreen) {
+    nav.push(MaterialPageRoute(
+      settings: const RouteSettings(name: 'run'),
+      builder: (_) => const RunScreen(),
+    ));
+  }
+}
+
+Future<void> _requestPermissions() async {
+  // Request notification permission
+  await Permission.notification.request();
+
+  // Request exact alarm permission for Android 12+
+  if (await Permission.scheduleExactAlarm.isDenied) {
+    await Permission.scheduleExactAlarm.request();
+  }
+}
+
+// Background Task Handler for foreground service
+@pragma('vm:entry-point')
+class BakersTimerTaskHandler extends TaskHandler {
+  static const String _kExpiryTime = 'timer_expiry_time';
+  static const String _kStepName = 'timer_step_name';
+  static const String _kStepIndex = 'timer_step_index';
+  static const String _kSequenceTitle = 'timer_sequence_title';
+
+  AudioPlayer? _audioPlayer;
+
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    // Called when the foreground service is started
+  }
+
+  @override
+  void onRepeatEvent(DateTime timestamp) async {
+    final prefs = await SharedPreferences.getInstance();
+    final expiryTime = prefs.getInt(_kExpiryTime);
+
+    if (expiryTime == null) {
+      // No active timer
+      FlutterForegroundTask.stopService();
+      return;
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final remaining = ((expiryTime - now) / 1000).ceil();
+    final stepName = prefs.getString(_kStepName) ?? 'Timer';
+    final sequenceTitle = prefs.getString(_kSequenceTitle) ?? 'Bakers Timer';
+
+    if (remaining <= 0) {
+      // Timer expired!
+      await _showAlarmNotification(stepName, sequenceTitle);
+      await _playAlarm();
+
+      // Clear expiry time to prevent repeated alarms
+      await prefs.remove(_kExpiryTime);
+
+      // Update notification to show timer complete
+      FlutterForegroundTask.updateService(
+        notificationTitle: 'Timer Complete!',
+        notificationText: '$stepName - $sequenceTitle',
+      );
+    } else {
+      // Update notification with remaining time
+      final timeStr = _formatSeconds(remaining);
+      FlutterForegroundTask.updateService(
+        notificationTitle: sequenceTitle,
+        notificationText: '$stepName: $timeStr remaining',
+      );
+    }
+  }
+
+  @override
+  Future<void> onDestroy(DateTime timestamp) async {
+    // Clean up
+    await _audioPlayer?.stop();
+    await _audioPlayer?.dispose();
+    _audioPlayer = null;
+  }
+
+  Future<void> _showAlarmNotification(
+      String stepName, String sequenceTitle) async {
+    const androidDetails = AndroidNotificationDetails(
+      'bakers_timer_alarms',
+      'Timer Alarms',
+      channelDescription: 'Notifications for when timers complete',
+      importance: Importance.max,
+      priority: Priority.high,
+      playSound: true,
+      enableVibration: true,
+      fullScreenIntent: true,
+      category: AndroidNotificationCategory.alarm,
+      actions: <AndroidNotificationAction>[
+        AndroidNotificationAction('OPEN', 'Open'),
+        AndroidNotificationAction('DISMISS', 'Dismiss', cancelNotification: true),
+      ],
+    );
+
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    const notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    await flutterLocalNotificationsPlugin.show(0, 'Timer Complete!',
+        '$stepName - $sequenceTitle', notificationDetails,
+        payload: jsonEncode({
+          'action': 'open_run',
+          'sequenceTitle': sequenceTitle,
+          'stepName': stepName,
+        }));
+  }
+
+  Future<void> _playAlarm() async {
+    try {
+      _audioPlayer ??= AudioPlayer();
+      await _audioPlayer!.setReleaseMode(ReleaseMode.loop);
+      await _audioPlayer!.play(AssetSource('alarm.wav'));
+    } catch (e) {
+      // Ignore audio errors
+    }
+  }
+
+  String _formatSeconds(int seconds) {
+    final d = Duration(seconds: seconds);
+    final hours = d.inHours;
+    final minutes = d.inMinutes.remainder(60);
+    final secs = d.inSeconds.remainder(60);
+    if (hours > 0) {
+      return '${hours}h ${minutes}m ${secs}s';
+    } else if (minutes > 0) {
+      return '${minutes}m ${secs}s';
+    } else {
+      return '${secs}s';
+    }
+  }
 }
 
 // Models
@@ -222,14 +473,70 @@ class RunnerState {
 }
 
 class RunnerNotifier extends StateNotifier<RunnerState> {
-  RunnerNotifier() : super(RunnerState());
+  RunnerNotifier() : super(RunnerState()) {
+    _restoreTimerState();
+  }
 
   Timer? _ticker;
   AudioPlayer? _audioPlayer;
 
-  void startSequence(TimerSequence seq) {
+  static const String _kExpiryTime = 'timer_expiry_time';
+  static const String _kStepName = 'timer_step_name';
+  static const String _kStepIndex = 'timer_step_index';
+  static const String _kSequenceTitle = 'timer_sequence_title';
+  static const String _kSequenceSteps = 'timer_sequence_steps';
+
+  // Restore timer state when app is reopened
+  Future<void> _restoreTimerState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final expiryTime = prefs.getInt(_kExpiryTime);
+    final sequenceJson = prefs.getString(_kSequenceSteps);
+    final stepIndex = prefs.getInt(_kStepIndex);
+
+    if (expiryTime == null || sequenceJson == null || stepIndex == null) {
+      return; // No active timer
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final remaining = ((expiryTime - now) / 1000).ceil();
+
+    if (remaining <= 0) {
+      // Timer already expired
+      return;
+    }
+
+    try {
+      final sequenceData = jsonDecode(sequenceJson) as Map<String, dynamic>;
+      final sequence = TimerSequence.fromJson(sequenceData);
+
+      state = RunnerState(
+        sequence: sequence,
+        currentIndex: stepIndex,
+        remainingSeconds: remaining,
+        isRunning: true,
+        isPaused: false,
+        isAlarmed: false,
+        isRinging: false,
+      );
+
+      _startTicker();
+    } catch (e) {
+      // Failed to restore - clear state
+      await prefs.remove(_kExpiryTime);
+      await prefs.remove(_kSequenceSteps);
+      await prefs.remove(_kStepIndex);
+    }
+  }
+
+  Future<void> startSequence(TimerSequence seq) async {
     _cancelTicker();
     if (seq.steps.isEmpty) return;
+
+    // Save sequence to preferences
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kSequenceTitle, seq.title);
+    await prefs.setString(_kSequenceSteps, jsonEncode(seq.toJson()));
+
     state = RunnerState(
         sequence: seq,
         currentIndex: 0,
@@ -238,35 +545,78 @@ class RunnerNotifier extends StateNotifier<RunnerState> {
         isPaused: false,
         isAlarmed: false);
     // Immediately start the first step
-    startCurrentStep();
+    await startCurrentStep();
   }
 
-  void startCurrentStep() {
+  Future<void> startCurrentStep() async {
     if (state.sequence == null) return;
     final steps = state.sequence!.steps;
     if (state.currentIndex < 0 || state.currentIndex >= steps.length) return;
     final seconds = steps[state.currentIndex].durationSeconds;
+
+    // Calculate expiry time and save to preferences
+    final expiryTime = DateTime.now().millisecondsSinceEpoch + (seconds * 1000);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kExpiryTime, expiryTime);
+    await prefs.setString(_kStepName, steps[state.currentIndex].name);
+    await prefs.setInt(_kStepIndex, state.currentIndex);
+
     state = state.copyWith(
         remainingSeconds: seconds,
         isRunning: true,
         isPaused: false,
         isAlarmed: false);
+
+    // Start foreground service
+    await _startForegroundService();
     _startTicker();
   }
 
-  void pauseOrResume() {
+  Future<void> _startForegroundService() async {
+    if (!await FlutterForegroundTask.isRunningService) {
+      await FlutterForegroundTask.startService(
+        serviceId: 256,
+        notificationTitle: state.sequence?.title ?? 'Bakers Timer',
+        notificationText: 'Timer running...',
+        notificationIcon: null,
+        notificationButtons: [
+          const NotificationButton(id: 'stop', text: 'Stop'),
+        ],
+        callback: BakersTimerTaskHandler.new,
+      );
+    }
+  }
+
+  Future<void> pauseOrResume() async {
     if (state.isRunning && !state.isPaused) {
       // pause
       _cancelTicker();
+
+      // Save current remaining time as new expiry time when resumed
+      final prefs = await SharedPreferences.getInstance();
+      await prefs
+          .remove(_kExpiryTime); // Remove expiry to pause background timer
+
       state = state.copyWith(isPaused: true, isRunning: false);
+
+      // Update foreground notification
+      await FlutterForegroundTask.updateService(
+        notificationTitle: state.sequence?.title ?? 'Bakers Timer',
+        notificationText: 'Timer paused',
+      );
     } else if (state.isPaused) {
       // resume
+      final expiryTime = DateTime.now().millisecondsSinceEpoch +
+          (state.remainingSeconds * 1000);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_kExpiryTime, expiryTime);
+
       state = state.copyWith(isPaused: false, isRunning: true);
       _startTicker();
     }
   }
 
-  void startNextStep() {
+  Future<void> startNextStep() async {
     if (state.sequence == null) return;
     final nextIndex = state.currentIndex + 1;
     if (nextIndex >= state.sequence!.steps.length) {
@@ -277,13 +627,19 @@ class RunnerNotifier extends StateNotifier<RunnerState> {
           isAlarmed: false,
           isRinging: false);
       _cancelTicker();
+      await FlutterForegroundTask.stopService();
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kExpiryTime);
+      await prefs.remove(_kStepName);
+      await prefs.remove(_kStepIndex);
       return;
     }
     // only allow starting the next step after user has stopped the alarm
     if (state.isAlarmed && state.isRinging) return;
     state = state.copyWith(
         currentIndex: nextIndex, isAlarmed: false, isRinging: false);
-    startCurrentStep();
+    await startCurrentStep();
   }
 
   Future<void> stop() async {
@@ -293,13 +649,33 @@ class RunnerNotifier extends StateNotifier<RunnerState> {
       await _audioPlayer?.dispose();
       _audioPlayer = null;
     } catch (_) {}
+
+    // Stop foreground service and clear preferences
+    await FlutterForegroundTask.stopService();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kExpiryTime);
+    await prefs.remove(_kStepName);
+    await prefs.remove(_kStepIndex);
+
     state = RunnerState();
   }
 
   void _startTicker() {
     _cancelTicker();
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      final rem = state.remainingSeconds - 1;
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) async {
+      // Check expiry time from preferences to stay in sync with background service
+      final prefs = await SharedPreferences.getInstance();
+      final expiryTime = prefs.getInt(_kExpiryTime);
+
+      if (expiryTime == null) {
+        // Timer was stopped externally
+        _cancelTicker();
+        return;
+      }
+
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final rem = ((expiryTime - now) / 1000).ceil();
+
       if (rem <= 0) {
         _cancelTicker();
         state = state.copyWith(
@@ -422,6 +798,7 @@ class BakersTimerApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Bakers Timer',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFFFC857)),
@@ -502,7 +879,7 @@ class _MainMenuScreenState extends ConsumerState<MainMenuScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Welcome to Bakers Timer',
+                          Text("Welcome to Baker's Timer",
                               style: Theme.of(context).textTheme.titleLarge),
                           const SizedBox(height: 6),
                           Text('Pick a saved sequence or create a new one',
@@ -525,40 +902,48 @@ class _MainMenuScreenState extends ConsumerState<MainMenuScreen>
                         itemBuilder: (context, i) {
                           final s = saved[i];
                           return Card(
-                                child: ListTile(
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  isThreeLine: true,
-                                  title: Row(
-                                    children: [
-                                      IconButton(
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                        icon: const Icon(Icons.book, size: 20),
-                                        onPressed: () {
-                                          ref.read(sequenceEditorProvider.notifier).setSequence(s);
-                                          Navigator.of(context).push(MaterialPageRoute(builder: (_) => EditorScreen(savedIndex: i)));
-                                        },
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(child: Text(s.title)),
-                                    ],
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              isThreeLine: true,
+                              title: Row(
+                                children: [
+                                  IconButton(
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                    icon: const Icon(Icons.book, size: 20),
+                                    onPressed: () {
+                                      ref
+                                          .read(sequenceEditorProvider.notifier)
+                                          .setSequence(s);
+                                      Navigator.of(context).push(
+                                          MaterialPageRoute(
+                                              builder: (_) =>
+                                                  EditorScreen(savedIndex: i)));
+                                    },
                                   ),
-                                  subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text('${s.steps.length} steps • ${formatDurationNice(s.steps.fold<int>(0, (a, b) => a + b.durationSeconds))}'),
-                                      if ((s.note).isNotEmpty)
-                                        Text(
-                                          s.note,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: Theme.of(context).textTheme.bodySmall,
-                                        ),
-                                    ],
-                                  ),
-                                  trailing: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
+                                  const SizedBox(width: 10),
+                                  Expanded(child: Text(s.title)),
+                                ],
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                      '${s.steps.length} steps • ${formatDurationNice(s.steps.fold<int>(0, (a, b) => a + b.durationSeconds))}'),
+                                  if ((s.note).isNotEmpty)
+                                    Text(
+                                      s.note,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style:
+                                          Theme.of(context).textTheme.bodySmall,
+                                    ),
+                                ],
+                              ),
+                              trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
                                     IconButton(
                                       icon: const Icon(Icons.play_arrow),
                                       onPressed: () {
@@ -853,7 +1238,8 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     });
     _notesFocusNode.addListener(() {
       if (_notesFocusNode.hasFocus && !_clearedNotesOnFocus) {
-        if (_notesController.text.isEmpty || _notesController.text == 'Add notes...') {
+        if (_notesController.text.isEmpty ||
+            _notesController.text == 'Add notes...') {
           _notesController.clear();
         }
         _clearedNotesOnFocus = true;

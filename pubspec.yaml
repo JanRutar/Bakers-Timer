@@ -35,7 +35,10 @@ dependencies:
   shared_preferences: ^2.1.0
   path_provider: ^2.0.15
   cupertino_icons: ^1.0.6
-  audioplayers: ^6.5.1
+  audioplayers: ^6.1.0
+  flutter_foreground_task: ^8.15.0
+  flutter_local_notifications: ^18.0.1
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:
@@ -99,5 +102,5 @@ flutter_launcher_icons:
   ios: true
   image_path: "assets/icon/Bakers_timer_icon.png" # Path to your 1024x1024 image
   # Optional: For a truly "nice" look on Android
-  adaptive_icon_background: "#FFFFFF" # Background color
-
+  adaptive_icon_background: "#121212" # Use the Hex code for your "Deep Charcoal"
+  adaptive_icon_foreground: "assets/icon/Bakers_timer_foreground.png"
